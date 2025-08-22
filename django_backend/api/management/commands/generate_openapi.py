@@ -14,12 +14,13 @@ class Command(BaseCommand):
 
         schema_view = get_schema_view(
             openapi.Info(
-                title="My API",
+                title="PostgreSQL Data Access API",
                 default_version='v1',
-                description="Test description",
+                description="API to fetch rows from PostgreSQL using Django REST Framework.",
             ),
             public=True,
             permission_classes=(AllowAny,),
+            urlconf='config.urls',
         )
 
         # Call the view with the raw Django HttpRequest

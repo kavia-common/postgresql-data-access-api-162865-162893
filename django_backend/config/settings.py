@@ -11,6 +11,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+from urllib.parse import urlparse
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -83,10 +85,48 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# Database
+# Switch to PostgreSQL using environment variables provided by the orchestrator.
+# Required env vars:
+# - POSTGRES_URL: hostname or full URL
+# - POSTGRES_USER
+# - POSTGRES_PASSWORD
+# - POSTGRES_DB
+# - POSTGRES_PORT
+def _pg_value(name, default=None):
+    return os.environ.get(name, default)
+
+POSTGRES_URL = _pg_value("POSTGRES_URL", "")
+POSTGRES_USER = _pg_value("POSTGRES_USER", "")
+POSTGRES_PASSWORD = _pg_value("POSTGRES_PASSWORD", "")
+POSTGRES_DB = _pg_value("POSTGRES_DB", "")
+POSTGRES_PORT = _pg_value("POSTGRES_PORT", "5432")
+
+# Support both host:port and full URL forms for POSTGRES_URL
+pg_host = POSTGRES_URL
+pg_port = POSTGRES_PORT
+if POSTGRES_URL and (POSTGRES_URL.startswith("postgres://") or POSTGRES_URL.startswith("postgresql://")):
+    parsed = urlparse(POSTGRES_URL)
+    pg_host = parsed.hostname or ""
+    if parsed.port:
+        pg_port = str(parsed.port)
+    if not POSTGRES_DB:
+        POSTGRES_DB = (parsed.path or "").lstrip("/")
+    if not POSTGRES_USER:
+        POSTGRES_USER = parsed.username or ""
+    if not POSTGRES_PASSWORD:
+        POSTGRES_PASSWORD = parsed.password or ""
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'HOST': pg_host or 'localhost',
+        'PORT': pg_port,
+        'NAME': POSTGRES_DB or 'postgres',
+        'USER': POSTGRES_USER or 'postgres',
+        'PASSWORD': POSTGRES_PASSWORD or '',
+        'CONN_MAX_AGE': 60,
+        'OPTIONS': {},
     }
 }
 
@@ -126,6 +166,12 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+REST_FRAMEWORK = {
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    ],
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
