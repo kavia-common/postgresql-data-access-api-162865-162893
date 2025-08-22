@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Records Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: #111827;
+        --text: #e5e7eb;
+        --muted: #9ca3af;
+        --accent: #38bdf8;
+        --ok: #22c55e;
+        --warn: #f59e0b;
+        --err: #ef4444;
+        --border: #1f2937;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+        min-height: 100%;
+      }
+      .container {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      header {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+      }
+      .title {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+      }
+      .controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .input, .select {
+        background: var(--panel);
+        color: var(--text);
+        border: 1px solid var(--border);
+        padding: 8px 10px;
+        border-radius: 8px;
+        outline: none;
+      }
+      .btn {
+        background: var(--accent);
+        color: #001018;
+        border: none;
+        padding: 8px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px;
+      }
+      .status {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 12px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .pill {
+        padding: 3px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        border: 1px solid var(--border);
+      }
+      .pill.ok { color: var(--ok); border-color: #1b3a27; background: rgba(34,197,94,0.08); }
+      .pill.warn { color: var(--warn); border-color: #3a2e1b; background: rgba(245,158,11,0.08); }
+      .pill.err { color: var(--err); border-color: #3a1b1b; background: rgba(239,68,68,0.08); }
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+      }
+      .table th, .table td {
+        border-bottom: 1px solid var(--border);
+        padding: 10px 8px;
+        text-align: left;
+        font-size: 14px;
+      }
+      .table th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .empty {
+        color: var(--muted);
+        padding: 14px 8px;
+      }
+      .footer {
+        margin-top: 20px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      code {
+        background: #0b1220;
+        border: 1px solid var(--border);
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+      .small {
+        font-size: 12px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <div class="title">PostgreSQL Records Viewer</div>
+        <div class="controls">
+          <label class="small" for="baseUrl">API Base</label>
+          <input class="input" id="baseUrl" size="36" placeholder="https://host/api" />
+          <button class="btn" id="loadBtn">Load</button>
+        </div>
+      </header>
+
+      <div class="panel">
+        <div class="status" id="statusRow">
+          <span class="pill warn" id="healthPill">Health: unknown</span>
+          <span class="pill warn" id="loadPill">Data: idle</span>
+          <span class="small" id="metaInfo"></span>
+        </div>
+
+        <div id="errorBox" style="display:none" class="pill err"></div>
+
+        <table class="table" id="recordsTable" aria-label="Records table">
+          <thead>
+            <tr>
+              <th style="width: 80px;">ID</th>
+              <th>Name</th>
+              <th style="width: 120px;">Value</th>
+              <th style="width: 240px;">Created At</th>
+            </tr>
+          </thead>
+          <tbody id="recordsBody">
+            <tr><td class="empty" colspan="4">No data loaded</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="footer">
+        Endpoints used: <code>/api/health/</code>, <code>/api/records/</code>.
+      </div>
+    </div>
+
+    <script>
+      // PUBLIC_INTERFACE
+      /**
+       * fetchJson performs a GET request and returns parsed JSON with robust error handling.
+       * @param {string} url - Absolute URL to fetch.
+       * @returns {Promise<any>} JSON data.
+       */
+      async function fetchJson(url) {
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: { 'Accept': 'application/json' },
+        });
+        const text = await res.text();
+        let json;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch (e) {
+          throw new Error('Invalid JSON response');
+        }
+        if (!res.ok) {
+          const detail = json && (json.detail || json.error || JSON.stringify(json));
+          throw new Error(`HTTP ${res.status}: ${detail || res.statusText}`);
+        }
+        return json;
+      }
+
+      // Helpers to update UI state
+      function setHealth(statusText, ok) {
+        const pill = document.getElementById('healthPill');
+        pill.textContent = `Health: ${statusText}`;
+        pill.classList.remove('ok', 'warn', 'err');
+        pill.classList.add(ok ? 'ok' : 'err');
+      }
+
+      function setLoad(statusText, state) {
+        const pill = document.getElementById('loadPill');
+        pill.textContent = `Data: ${statusText}`;
+        pill.classList.remove('ok', 'warn', 'err');
+        pill.classList.add(state); // ok | warn | err
+      }
+
+      function showError(message) {
+        const box = document.getElementById('errorBox');
+        if (!message) {
+          box.style.display = 'none';
+          box.textContent = '';
+          return;
+        }
+        box.style.display = 'inline-block';
+        box.textContent = message;
+      }
+
+      function renderRows(rows) {
+        const body = document.getElementById('recordsBody');
+        body.innerHTML = '';
+        if (!rows || rows.length === 0) {
+          const tr = document.createElement('tr');
+          const td = document.createElement('td');
+          td.colSpan = 4;
+          td.className = 'empty';
+          td.textContent = 'No records found';
+          tr.appendChild(td);
+          body.appendChild(tr);
+          return;
+        }
+        for (const r of rows) {
+          const tr = document.createElement('tr');
+
+          const tdId = document.createElement('td');
+          tdId.textContent = r.id ?? '';
+          tr.appendChild(tdId);
+
+          const tdName = document.createElement('td');
+          tdName.textContent = r.name ?? '';
+          tr.appendChild(tdName);
+
+          const tdValue = document.createElement('td');
+          tdValue.textContent = r.value ?? '';
+          tr.appendChild(tdValue);
+
+          const tdCreated = document.createElement('td');
+          // Show ISO but allow nicer formatting when possible
+          try {
+            const d = r.created_at ? new Date(r.created_at) : null;
+            tdCreated.textContent = d && !isNaN(d) ? d.toLocaleString() : (r.created_at ?? '');
+          } catch {
+            tdCreated.textContent = r.created_at ?? '';
+          }
+          tr.appendChild(tdCreated);
+
+          body.appendChild(tr);
+        }
+      }
+
+      function resolveBaseUrl() {
+        // Default base URL tries to infer from the docs URL provided by orchestrator
+        // Typically backend is exposed at ...:3001 and API base is ...:3001/api
+        const input = document.getElementById('baseUrl');
+        let base = input.value.trim();
+        if (!base) {
+          // Fallback: current origin + /api
+          base = `${location.origin}/api`;
+          input.value = base;
+        }
+        // Normalize: remove trailing slashes
+        base = base.replace(/\/+$/, '');
+        return base;
+      }
+
+      async function checkHealth(base) {
+        try {
+          const data = await fetchJson(`${base}/health/`);
+          const ok = data && data.message;
+          setHealth(ok ? 'ok' : 'unknown', !!ok);
+        } catch (e) {
+          setHealth('unavailable', false);
+          throw e;
+        }
+      }
+
+      async function loadRecords(base) {
+        setLoad('loading…', 'warn');
+        showError('');
+        try {
+          const t0 = performance.now();
+          const rows = await fetchJson(`${base}/records/`);
+          const t1 = performance.now();
+          renderRows(rows);
+          setLoad(`loaded (${rows.length}) in ${(t1 - t0).toFixed(0)}ms`, 'ok');
+        } catch (e) {
+          setLoad('error', 'err');
+          showError(e.message || 'Failed to load records');
+        }
+      }
+
+      async function run() {
+        const base = resolveBaseUrl();
+        const meta = document.getElementById('metaInfo');
+        meta.textContent = `Base: ${base}`;
+        try {
+          await checkHealth(base);
+        } catch {
+          // Health failed, we still try records to surface detailed error
+        }
+        await loadRecords(base);
+      }
+
+      // Wire up UI
+      document.getElementById('loadBtn').addEventListener('click', () => run());
+
+      // Auto-run on first load with inferred base URL
+      window.addEventListener('DOMContentLoaded', run);
+    </script>
+  </body>
+</html>
